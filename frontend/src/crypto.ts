@@ -1,6 +1,5 @@
 import { x25519 } from '@noble/curves/ed25519';
 import HKDF from 'futoin-hkdf';
-import { xchacha20poly1305 } from '@noble/ciphers/chacha';
 import { randomBytes, utf8ToBytes, bytesToUtf8, bytesToHex, hexToBytes } from '@noble/hashes/utils';
 import { Buffer } from 'buffer';
 
@@ -34,15 +33,19 @@ export function deriveKeyHKDF(
 
 export function encryptMessage(sharedSecret: Uint8Array, plaintext: string) {
   const salt = randomBytes(16);
-  const nonce = randomBytes(24);
-  const key = deriveKeyHKDF(salt, sharedSecret);
+  const iv = randomBytes(12); // 12 bytes for AES-GCM
+  const keyMaterial = deriveKeyHKDF(salt, sharedSecret);
 
-  const aead = xchacha20poly1305(key, nonce);
-  const pt = utf8ToBytes(plaintext);
-
-  const ct = aead.encrypt(pt);
-
-  return { salt, nonce, ciphertext: ct };
+  // Import key for AES-GCM
+  return window.crypto.subtle
+    .importKey('raw', keyMaterial, { name: 'AES-GCM' }, false, ['encrypt'])
+    .then((cryptoKey) => {
+      const pt = utf8ToBytes(plaintext);
+      return window.crypto.subtle.encrypt({ name: 'AES-GCM', iv }, cryptoKey, pt);
+    })
+    .then((cipherBuffer) => {
+      return { salt, nonce: iv, ciphertext: new Uint8Array(cipherBuffer) };
+    });
 }
 
 export function decryptMessage(
@@ -50,12 +53,16 @@ export function decryptMessage(
   salt: Uint8Array,
   nonce: Uint8Array,
   ciphertext: Uint8Array,
-): string {
-  const key = deriveKeyHKDF(salt, sharedSecret);
-  const aead = xchacha20poly1305(key, nonce);
-
-  const pt = aead.decrypt(ciphertext); // will throw if auth fails
-  return bytesToUtf8(pt);
+): Promise<string> {
+  const keyMaterial = deriveKeyHKDF(salt, sharedSecret);
+  return window.crypto.subtle
+    .importKey('raw', keyMaterial, { name: 'AES-GCM' }, false, ['decrypt'])
+    .then((cryptoKey) => {
+      return window.crypto.subtle.decrypt({ name: 'AES-GCM', iv: nonce }, cryptoKey, ciphertext);
+    })
+    .then((plainBuffer) => {
+      return bytesToUtf8(new Uint8Array(plainBuffer));
+    });
 }
 
 export { bytesToHex, hexToBytes };
