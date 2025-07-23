@@ -1,0 +1,31 @@
+{
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "editor.formatOnSave": true,
+  "editor.tabSize": 2,
+  "editor.renderWhitespace": "all",
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit"
+  },
+  "eslint.validate": ["javascript", "typescript", "react"],
+  "eslint.workingDirectories": [
+    {
+      "mode": "auto"
+    }
+  ],
+  "prettier.configPath": "",
+  "files.eol": "\n",
+  "i18n-ally.localesPaths": ["frontend/apps/meedio-connect/public/locales"],
+  "i18n-ally.pathMatcher": "{locale}/translation.json",
+  "i18n-ally.keystyle": "nested",
+  "i18n-ally.sourceLanguage": "en",
+  "i18n-ally.enabledFrameworks": ["i18next", "react"],
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "files.associations": {
+    "*.xml": "html",
+    "*.svg": "html"
+  },
+  "files.insertFinalNewline": true,
+  "[json][jsonc]": {
+    "editor.codeActionsOnSave": ["source.fixAll"]
+  }
+}
