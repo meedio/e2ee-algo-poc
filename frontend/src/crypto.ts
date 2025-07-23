@@ -45,13 +45,16 @@ export function deriveKeyHKDF(
 }
 
 export function encryptMessage(sharedSecret: Uint8Array, plaintext: string) {
-  const salt = randomBytes(16); // for HKDF
-  const nonce = randomBytes(12); // for AEAD
-  const key = deriveKeyHKDF(salt, sharedSecret);
-  const aead = chacha20poly1305(key ,nonce); // AEAD instance
+  const salt = randomBytes(16);
+  const nonce = randomBytes(12);
+  const key = deriveKeyHKDF(salt, sharedSecret); // should be 32 bytes
 
+
+
+  const aead = chacha20poly1305(key, nonce);
   const pt = utf8ToBytes(plaintext);
-  const ct = aead.encrypt(nonce, pt); // returns ciphertext + tag
+
+  const ct = aead.encrypt(pt); 
 
   return { salt, nonce, ciphertext: ct };
 }
@@ -65,7 +68,7 @@ export function decryptMessage(
   const key = deriveKeyHKDF(salt, sharedSecret);
   const aead = chacha20poly1305(key, nonce);
 
-  const pt = aead.decrypt(nonce, ciphertext); // will throw if auth fails
+  const pt = aead.decrypt(ciphertext); // will throw if auth fails
   return bytesToUtf8(pt);
 }
 
