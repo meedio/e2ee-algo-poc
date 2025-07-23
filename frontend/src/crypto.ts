@@ -1,6 +1,6 @@
 import { x25519 } from '@noble/curves/ed25519';
 import HKDF from 'futoin-hkdf';
-import { chacha20 } from '@noble/ciphers/chacha';
+import {  chacha20poly1305 } from '@noble/ciphers/chacha';
 import {
   randomBytes,
   utf8ToBytes,
@@ -45,11 +45,14 @@ export function deriveKeyHKDF(
 }
 
 export function encryptMessage(sharedSecret: Uint8Array, plaintext: string) {
-  const salt = randomBytes(16);
-  const nonce = randomBytes(12);
+  const salt = randomBytes(16); // for HKDF
+  const nonce = randomBytes(12); // for AEAD
   const key = deriveKeyHKDF(salt, sharedSecret);
+  const aead = chacha20poly1305(key ,nonce); // AEAD instance
+
   const pt = utf8ToBytes(plaintext);
-  const ct = chacha20(key, nonce, pt);
+  const ct = aead.encrypt(nonce, pt); // returns ciphertext + tag
+
   return { salt, nonce, ciphertext: ct };
 }
 
@@ -60,7 +63,9 @@ export function decryptMessage(
   ciphertext: Uint8Array
 ): string {
   const key = deriveKeyHKDF(salt, sharedSecret);
-  const pt = chacha20(key, nonce, ciphertext);
+  const aead = chacha20poly1305(key, nonce);
+
+  const pt = aead.decrypt(nonce, ciphertext); // will throw if auth fails
   return bytesToUtf8(pt);
 }
 
