@@ -1,10 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import io from 'socket.io-client';
 import { deriveKeyPair, deriveSharedSecret, encryptMessage, decryptMessage, bytesToHex, hexToBytes } from './crypto';
+import { randomBytes } from '@noble/hashes/utils';
 
 const WS_URL = 'http://localhost:3001';
 
-type Message = { from: string; text: string };
+type Message = { from: string; text: string; sessionId?: string; messageId?: string };
 type HandshakeMsg = { type: string; pubKey: string };
 type ChatMsg = { type: string; salt: string; nonce: string; payload: string };
 type KeyPair = { priv: Uint8Array; pub: Uint8Array };
@@ -17,10 +18,14 @@ function App() {
   const [input, setInput] = useState('');
   const [handshakeDone, setHandshakeDone] = useState(false);
   const [status, setStatus] = useState('Not connected');
+  const [reuseMessageId, setReuseMessageId] = useState(false);
+  const [lastMessageId, setLastMessageId] = useState<string | null>(null);
 
   const keyPair = useRef<KeyPair | null>(null);
   const sharedSecret = useRef<Uint8Array | null>(null);
   const peerPubKey = useRef<string | null>(null);
+  const usedMessageIds = useRef<Map<string, Set<string>>>(new Map());
+  const [sessionId, setSessionId] = useState<string>('');
 
   const resetHandshake = () => {
     sharedSecret.current = null;
@@ -37,12 +42,39 @@ function App() {
     }
   };
 
+  const generateSessionId = () => {
+    const id = Array.from(randomBytes(16))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+    setSessionId(id);
+    return id;
+  };
+
+  const generateMessageId = () => {
+    return Array.from(randomBytes(16))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+  };
+
+  const markMessageId = (sessionId: string, messageId: string) => {
+    if (!usedMessageIds.current.has(sessionId)) {
+      usedMessageIds.current.set(sessionId, new Set());
+    }
+    usedMessageIds.current.get(sessionId)!.add(messageId);
+  };
+
+  const isMessageIdUsed = (sessionId: string, messageId: string) => {
+    return usedMessageIds.current.has(sessionId) && usedMessageIds.current.get(sessionId)!.has(messageId);
+  };
+
   useEffect(() => {
     generateKeyPair();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleHandshake = (msg: HandshakeMsg) => {
+  const handleHandshake = (msg: HandshakeMsg & { sessionId?: string; messageId?: string }) => {
+    if (msg.sessionId && msg.messageId && isMessageIdUsed(msg.sessionId, msg.messageId)) return; // replay protection
+    if (msg.sessionId && msg.messageId) markMessageId(msg.sessionId, msg.messageId);
     if (!keyPair.current) return;
     if (!peerPubKey.current || peerPubKey.current !== msg.pubKey) {
       peerPubKey.current = msg.pubKey;
@@ -52,7 +84,9 @@ function App() {
     }
   };
 
-  const handleChat = (msg: ChatMsg) => {
+  const handleChat = (msg: ChatMsg & { sessionId?: string; messageId?: string }) => {
+    if (msg.sessionId && msg.messageId && isMessageIdUsed(msg.sessionId, msg.messageId)) return; // replay protection
+    if (msg.sessionId && msg.messageId) markMessageId(msg.sessionId, msg.messageId);
     if (!sharedSecret.current) return;
     try {
       const salt = hexToBytes(msg.salt);
@@ -60,7 +94,10 @@ function App() {
       const ciphertext = hexToBytes(msg.payload);
       decryptMessage(sharedSecret.current, salt, nonce, ciphertext)
         .then((plain) => {
-          setMessages((msgs) => [...msgs, { from: 'peer', text: plain }]);
+          setMessages((msgs) => [
+            ...msgs,
+            { from: 'peer', text: plain, sessionId: msg.sessionId, messageId: msg.messageId },
+          ]);
         })
         .catch(() => {
           setMessages((msgs) => [...msgs, { from: 'system', text: 'Failed to decrypt message' }]);
@@ -72,12 +109,15 @@ function App() {
 
   const joinChannel = () => {
     setStatus('Connecting...');
+    const id = generateSessionId();
     const sock = io(WS_URL);
     sock.on('connect', () => {
       setStatus('Connected, joining channel...');
       sock.emit('join', channel);
       if (keyPair.current) {
-        sock.emit('handshake', { pubKey: bytesToHex(keyPair.current.pub) });
+        const messageId = generateMessageId();
+        sock.emit('handshake', { pubKey: bytesToHex(keyPair.current.pub), sessionId: id, messageId });
+        markMessageId(id, messageId);
       }
     });
     sock.on('handshake', handleHandshake);
@@ -98,13 +138,23 @@ function App() {
 
   const sendMessage = () => {
     if (!socket || !sharedSecret.current || !handshakeDone) return;
+    let messageId: string;
+    if (reuseMessageId && lastMessageId) {
+      messageId = lastMessageId;
+    } else {
+      messageId = generateMessageId();
+      setLastMessageId(messageId);
+    }
     encryptMessage(sharedSecret.current, input).then(({ salt, nonce, ciphertext }) => {
       socket.emit('chat', {
         salt: bytesToHex(salt),
         nonce: bytesToHex(nonce),
         payload: bytesToHex(ciphertext),
+        sessionId,
+        messageId,
       });
-      setMessages((msgs) => [...msgs, { from: 'me', text: input }]);
+      markMessageId(sessionId, messageId);
+      setMessages((msgs) => [...msgs, { from: 'me', text: input, sessionId, messageId }]);
       setInput('');
     });
   };
@@ -188,6 +238,12 @@ function App() {
                         >
                           <span className="fw-bold small me-2">{m.from}:</span>
                           <span className="small">{m.text}</span>
+                          {(m.sessionId || m.messageId) && (
+                            <div style={{ fontSize: '0.6em', color: '#888', marginTop: 2, wordBreak: 'break-all' }}>
+                              {m.sessionId && <div>sessionId: {m.sessionId}</div>}
+                              {m.messageId && <div>messageId: {m.messageId}</div>}
+                            </div>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -207,6 +263,18 @@ function App() {
                       placeholder="Type a message..."
                       autoFocus
                     />
+                    <div className="d-flex align-items-center" style={{ fontSize: '0.8em' }}>
+                      <input
+                        type="checkbox"
+                        id="reuseMessageId"
+                        checked={reuseMessageId}
+                        onChange={(e) => setReuseMessageId(e.target.checked)}
+                        style={{ marginRight: 4 }}
+                      />
+                      <label htmlFor="reuseMessageId" style={{ userSelect: 'none', marginBottom: 0 }}>
+                        Reuse last messageId
+                      </label>
+                    </div>
                     <button className="btn btn-success" type="submit" disabled={!input || !handshakeDone}>
                       Send
                     </button>
