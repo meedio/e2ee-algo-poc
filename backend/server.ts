@@ -25,35 +25,54 @@ io.on('connection', (socket: Socket) => {
     channels[channel].clients.push(socket.id);
   });
 
-  socket.on('handshake', (msg: { pubKey: string }) => {
-    if (!joinedChannel || !channels[joinedChannel]) return;
-    const channel = channels[joinedChannel];
-    channel.pubKeys[socket.id] = msg.pubKey;
-    channel.clients.forEach((clientId) => {
-      if (clientId !== socket.id) {
-        io.to(clientId).emit('handshake', {
-          type: 'handshake',
-          pubKey: msg.pubKey,
-        });
-      }
-    });
-
-    Object.entries(channel.pubKeys).forEach(([clientId, pubKey]) => {
-      if (clientId !== socket.id) {
-        socket.emit('handshake', { type: 'handshake', pubKey });
-      }
-    });
-  });
-
-  socket.on('chat', (msg: { salt: string; nonce: string; payload: string }) => {
-    if (joinedChannel && channels[joinedChannel]) {
-      channels[joinedChannel].clients.forEach((clientId) => {
+  socket.on(
+    'handshake',
+    (msg: { pubKey: string; sessionId?: string; messageId?: string }) => {
+      if (!joinedChannel || !channels[joinedChannel]) return;
+      const channel = channels[joinedChannel];
+      channel.pubKeys[socket.id] = msg.pubKey;
+      channel.clients.forEach((clientId) => {
         if (clientId !== socket.id) {
-          io.to(clientId).emit('chat', { type: 'chat', ...msg });
+          io.to(clientId).emit('handshake', {
+            type: 'handshake',
+            pubKey: msg.pubKey,
+            sessionId: msg.sessionId, // relay sessionId if present
+            messageId: msg.messageId, // relay messageId if present
+          });
+        }
+      });
+
+      Object.entries(channel.pubKeys).forEach(([clientId, pubKey]) => {
+        if (clientId !== socket.id) {
+          socket.emit('handshake', {
+            type: 'handshake',
+            pubKey,
+            sessionId: msg.sessionId,
+            messageId: msg.messageId,
+          });
         }
       });
     }
-  });
+  );
+
+  socket.on(
+    'chat',
+    (msg: {
+      salt: string;
+      nonce: string;
+      payload: string;
+      sessionId?: string;
+      messageId?: string;
+    }) => {
+      if (joinedChannel && channels[joinedChannel]) {
+        channels[joinedChannel].clients.forEach((clientId) => {
+          if (clientId !== socket.id) {
+            io.to(clientId).emit('chat', { type: 'chat', ...msg });
+          }
+        });
+      }
+    }
+  );
 
   socket.on('disconnect', () => {
     if (joinedChannel && channels[joinedChannel]) {
