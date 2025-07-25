@@ -45,7 +45,7 @@ export function deriveSharedSecret(ourPriv: Uint8Array, theirPub: Uint8Array): U
 export function deriveKeyHKDF(
   salt: Uint8Array,
   sharedSecret: Uint8Array,
-  info = utf8ToBytes('chat-encryption'), // Default context for this poc app
+  info = utf8ToBytes('video-consultation'), // Default context for this poc app
 ): Uint8Array {
   // Use HKDF with SHA-256 to derive a 32-byte key
   // This provides forward secrecy and prevents key reuse attacks
